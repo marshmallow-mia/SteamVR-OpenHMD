@@ -373,6 +373,7 @@ public:
 
     DriverPose_t GetPose()
     {
+	pose = { 0 };
 	pose.poseIsValid = true;
 	pose.result = TrackingResult_Running_OK;
 	pose.deviceIsConnected = true;
@@ -384,6 +385,12 @@ public:
 		pose.qRotation.y = quat[1];
 		pose.qRotation.z = quat[2];
 		pose.qRotation.w = quat[3];
+
+		float angvel[3];
+		ohmd_device_getf(device, OHMD_ANGULAR_VELOCITY_VECTOR, angvel);
+		pose.vecAngularVelocity[0] = angvel[0];
+		pose.vecAngularVelocity[1] = angvel[1];
+		pose.vecAngularVelocity[2] = angvel[2];
 	}
 
 	if (device_flags & OHMD_DEVICE_FLAGS_POSITIONAL_TRACKING) {
@@ -392,7 +399,31 @@ public:
 		pose.vecPosition[0] = pos[0];
 		pose.vecPosition[1] = pos[1];
 		pose.vecPosition[2] = pos[2];
+
+		float vel[3];
+		ohmd_device_getf(device, OHMD_VELOCITY_VECTOR, vel);
+		pose.vecVelocity[0] = vel[0];
+		pose.vecVelocity[1] = vel[1];
+		pose.vecVelocity[2] = vel[2];
+
+		// Acceleration makes SteamVR's extrapolation second-order instead of
+		// purely linear. OpenHMD has always exposed it; we simply never read it.
+		float accel[3];
+		ohmd_device_getf(device, OHMD_ACCELERATION_VECTOR, accel);
+		pose.vecAcceleration[0] = accel[0];
+		pose.vecAcceleration[1] = accel[1];
+		pose.vecAcceleration[2] = accel[2];
 	}
+
+	// SteamVR predicts this pose forward to photon time itself, using the
+	// velocities above and poseTimeOffset as the epoch. Leaving the offset at 0
+	// claims the pose was sampled at the instant of this call, which is a lie by
+	// the pipeline latency (USB + fusion), so SteamVR under-predicts by exactly
+	// that much. Report the real age instead; it is negative because the sample
+	// is in the past.
+	float pose_age = 0.0f;
+	ohmd_device_getf(device, OHMD_POSE_AGE_SECONDS, &pose_age);
+	pose.poseTimeOffset = -pose_age;
 
 	// DriverLog("get controller %d pose %f %f %f %f, %f %f %f\n", index, quat[0], quat[1], quat[2], quat[3], pos[0], pos[1], pos[2]);
 
@@ -977,6 +1008,30 @@ public:
         pose.vecPosition[0] = pos[0];
         pose.vecPosition[1] = pos[1];
         pose.vecPosition[2] = pos[2];
+
+        float angvel[3];
+        ohmd_device_getf(d, OHMD_ANGULAR_VELOCITY_VECTOR, angvel);
+        pose.vecAngularVelocity[0] = angvel[0];
+        pose.vecAngularVelocity[1] = angvel[1];
+        pose.vecAngularVelocity[2] = angvel[2];
+
+        float vel[3];
+        ohmd_device_getf(d, OHMD_VELOCITY_VECTOR, vel);
+        pose.vecVelocity[0] = vel[0];
+        pose.vecVelocity[1] = vel[1];
+        pose.vecVelocity[2] = vel[2];
+
+        float accel[3];
+        ohmd_device_getf(d, OHMD_ACCELERATION_VECTOR, accel);
+        pose.vecAcceleration[0] = accel[0];
+        pose.vecAcceleration[1] = accel[1];
+        pose.vecAcceleration[2] = accel[2];
+
+        // See the HMD GetPose(): report how stale the pose is so SteamVR
+        // predicts forward from the sample epoch, not from "now".
+        float pose_age = 0.0f;
+        ohmd_device_getf(d, OHMD_POSE_AGE_SECONDS, &pose_age);
+        pose.poseTimeOffset = -pose_age;
 
         //printf("%f %f %f %f  %f %f %f\n", quat[0], quat[1], quat[2], quat[3], pos[0], pos[1], pos[2]);
         //fflush(stdout);
