@@ -1,0 +1,42 @@
+{
+   "GpuSpeed" : {
+      "gpuSpeed0" : 2450,
+      "gpuSpeed1" : 2244,
+      "gpuSpeed2" : 2498,
+      "gpuSpeed3" : 2341,
+      "gpuSpeed4" : 2339,
+      "gpuSpeedCount" : 5,
+      "gpuSpeedDriver" : "109056002",
+      "gpuSpeedHorsepower" : 2374,
+      "gpuSpeedRenderTargetScale" : 1.5,
+      "gpuSpeedVendor" : "AMD Radeon RX 7800 XT (RADV NAVI32)",
+      "gpuSpeedVersion" : 2
+   },
+   "LastKnown" : {
+      "ActualHMDDriver" : "openhmd",
+      "HMDManufacturer" : "Oculus",
+      "HMDModel" : "OpenHMD: Rift (CV1)",
+      "HMDSerialNumber" : "Rift (CV1): 5-1.1:1.0"
+   },
+   "audio" : {
+      "enableSpatializeGlobal" : false,
+      "enableSpatializeSurround" : false
+   },
+   "driver_lighthouse" : {
+      "enable" : false
+   },
+   "driver_oculus" : {
+      "enable" : false
+   },
+   "driver_oculus_legacy" : {
+      "enable" : false
+   },
+   "driver_openhmd" : {
+      "enable" : true
+   },
+   "steamvr" : {
+      "installID" : "2246516549319351234",
+      "lastVersionNotice" : "2.16.7",
+      "lastVersionNoticeDate" : "1781811939"
+   }
+}

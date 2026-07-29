@@ -1,0 +1,61 @@
+{
+   "DesktopUI" : {
+      "settings_desktop" : "1575,400,800,600,0"
+   },
+   "GpuSpeed" : {
+      "gpuSpeed0" : 2346,
+      "gpuSpeed1" : 2424,
+      "gpuSpeed2" : 2378,
+      "gpuSpeed3" : 2470,
+      "gpuSpeed4" : 2499,
+      "gpuSpeed5" : 2445,
+      "gpuSpeed6" : 2417,
+      "gpuSpeed7" : 2394,
+      "gpuSpeed8" : 2501,
+      "gpuSpeed9" : 2471,
+      "gpuSpeedCount" : 10,
+      "gpuSpeedDriver" : "109056004",
+      "gpuSpeedHorsepower" : 2436,
+      "gpuSpeedRenderTargetScale" : 1.5,
+      "gpuSpeedVendor" : "AMD Radeon RX 7800 XT (RADV NAVI32)",
+      "gpuSpeedVersion" : 2
+   },
+   "LastKnown" : {
+      "ActualHMDDriver" : "vrlink",
+      "HMDManufacturer" : "Oculus",
+      "HMDModel" : "Oculus Quest3",
+      "HMDSerialNumber" : "VRLINKHMDQUEST3",
+      "RemoteClientID" : "11273760733583660441"
+   },
+   "audio" : {
+      "enableSpatializeGlobal" : false,
+      "enableSpatializeSurround" : false
+   },
+   "dashboard" : {
+      "lastAccessedExternalOverlayKey" : "valve.steam.desktopgame.2177850105"
+   },
+   "driver_lighthouse" : {
+      "enable" : false
+   },
+   "driver_oculus" : {
+      "enable" : false
+   },
+   "driver_oculus_legacy" : {
+      "enable" : false
+   },
+   "driver_openhmd" : {
+      "enable" : true
+   },
+   "steam.app.2177850105" : {
+      "resolutionScale" : 100
+   },
+   "steamvr" : {
+      "haveStartedTutorialForNativeChaperoneDriver" : true,
+      "installID" : "5622474125887955656",
+      "lastVersionNotice" : "2.16.7",
+      "lastVersionNoticeDate" : "1781811939",
+      "preferredRefreshRate" : 120,
+      "showAdvancedSettings" : true,
+      "supersampleScale" : 0.62
+   }
+}

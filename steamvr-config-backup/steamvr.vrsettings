@@ -1,0 +1,51 @@
+{
+   "DesktopUI" : {
+      "settings_desktop" : "1316,365,800,600,0"
+   },
+   "GpuSpeed" : {
+      "gpuSpeed0" : 2280,
+      "gpuSpeed1" : 2342,
+      "gpuSpeed2" : 2267,
+      "gpuSpeed3" : 2423,
+      "gpuSpeed4" : 2299,
+      "gpuSpeed5" : 2365,
+      "gpuSpeed6" : 2313,
+      "gpuSpeed7" : 2303,
+      "gpuSpeed8" : 2421,
+      "gpuSpeed9" : 2431,
+      "gpuSpeedCount" : 10,
+      "gpuSpeedDriver" : "109056004",
+      "gpuSpeedHorsepower" : 2340,
+      "gpuSpeedRenderTargetScale" : 1.5,
+      "gpuSpeedVendor" : "AMD Radeon RX 7800 XT (RADV NAVI32)",
+      "gpuSpeedVersion" : 2
+   },
+   "LastKnown" : {
+      "ActualHMDDriver" : "openhmd",
+      "HMDManufacturer" : "Oculus",
+      "HMDModel" : "OpenHMD: Rift (CV1)",
+      "HMDSerialNumber" : "Rift (CV1): 5-2.1:1.0"
+   },
+   "audio" : {
+      "enableSpatializeGlobal" : false,
+      "enableSpatializeSurround" : false
+   },
+   "dashboard" : {
+      "lastAccessedExternalOverlayKey" : "valve.steam.desktopgame.2177850105"
+   },
+   "driver_lighthouse" : {
+      "enable" : false
+   },
+   "driver_oculus_legacy" : {
+      "enable" : false
+   },
+   "driver_openhmd" : {
+      "enable" : true
+   },
+   "steamvr" : {
+      "enableLinuxVulkanAsync" : true,
+      "installID" : "14490965120036495044",
+      "lastVersionNotice" : "2.16.7",
+      "lastVersionNoticeDate" : "1781811939"
+   }
+}
