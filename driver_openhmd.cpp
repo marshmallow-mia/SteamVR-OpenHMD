@@ -672,7 +672,27 @@ public:
 
     bool IsDisplayOnDesktop()
     {
-        return true;
+        /* A CV1 is not part of the desktop and never can be: the kernel marks
+         * its connector non-desktop=1, so the compositor deliberately refuses
+         * to lay it out, and there is no desktop rectangle for it to occupy.
+         * Claiming otherwise contradicts Prop_IsOnDesktop_Bool, which this
+         * driver already sets to false, and sends SteamVR looking for a window
+         * at the hardcoded (1920, 0) above - coordinates that belong to
+         * whatever real monitor happens to be there.
+         *
+         * Returning false puts SteamVR in direct mode, where it acquires the
+         * headset's connector itself. That is the same path Monado takes here
+         * successfully (VK_EXT_acquire_drm_display over a wp_drm_lease_v1
+         * connector).
+         *
+         * Set OHMD_STEAMVR_EXTENDED=1 for a headset that genuinely is an
+         * extended-desktop display, as the older OpenHMD-supported HMDs are. */
+        static int extended = -1;
+        if (extended == -1) {
+            const char *e = getenv("OHMD_STEAMVR_EXTENDED");
+            extended = (e && e[0] == '1');
+        }
+        return extended != 0;
     }
 
     bool IsDisplayRealDisplay()
