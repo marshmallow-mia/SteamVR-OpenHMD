@@ -433,12 +433,50 @@ public:
 	}
 
 	if (m_is_oculus) {
-		const HmdQuaternion_t oculusOffsetQ  = { 0.966, 0.259, 0, 0};
+		// Where the Touch actually is, rather than where upstream guessed.
+		//
+		// OpenHMD reports the pose of the LED-model frame (rift.c registers the
+		// controller with an identity model_pose), but SteamVR draws
+		// oculus_cv1_controller_left/right - and derives the OpenXR grip and aim
+		// poses - in Valve's render-model frame. driverFromHead is the transform
+		// between them, i.e. device <- rendermodel.
+		//
+		// Both frames are pinned by authoritative data we already have, so this
+		// is measured rather than tuned: Oculus's own 24-LED model, read out of
+		// the controller's flash, sits physically on the ring that Valve's mesh
+		// also models. Registering the LED cloud onto the mesh (rigid ICP, both
+		// controllers solved independently) converges to mirror-image transforms
+		// with a 2.1 mm mean residual - the depth the LEDs sit below the shell.
+		// Mapping the JSON's landmarks back through it lands openxr_aim on the
+		// ring's outward side and openxr_grip/base on the hand side, which is
+		// the arrangement the hardware has.
+		//
+		// The old constants put the controller 129 mm from where it belongs:
+		// they pushed +80 mm along Z when the correct offset pulls 44.5 mm the
+		// other way. The rotation was close (30 deg vs 33.06 deg measured),
+		// which is consistent with having been eyeballed until it looked right.
+		//
+		// OHMD_TOUCH_LEGACY_OFFSET=1 restores the old values for comparison.
+		static const bool legacy_offset =
+			getenv("OHMD_TOUCH_LEGACY_OFFSET") != NULL;
 
-		pose.qDriverFromHeadRotation = oculusOffsetQ;
+		if (legacy_offset) {
+			const HmdQuaternion_t oculusOffsetQ = { 0.966, 0.259, 0, 0};
+			pose.qDriverFromHeadRotation = oculusOffsetQ;
+			pose.vecDriverFromHeadTranslation[2] = 0.08;
+		} else {
+			// +33.06 deg about X
+			const HmdQuaternion_t touchOffsetQ = { 0.958669, 0.284523, 0, 0 };
+			pose.qDriverFromHeadRotation = touchOffsetQ;
+
+			// mirror-symmetric in X, as the two controllers are
+			bool left = (device_flags & OHMD_DEVICE_FLAGS_LEFT_CONTROLLER) != 0;
+			pose.vecDriverFromHeadTranslation[0] = left ? -0.00813 : 0.00813;
+			pose.vecDriverFromHeadTranslation[1] = 0.03201;
+			pose.vecDriverFromHeadTranslation[2] = -0.04453;
+		}
+
 		pose.qWorldFromDriverRotation = identityquat;
-
-		pose.vecDriverFromHeadTranslation[2] = 0.08;
 	}
 	else {
 		pose.qDriverFromHeadRotation = identityquat;
