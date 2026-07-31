@@ -627,8 +627,37 @@ public:
         //m_nRenderHeight /= 2;
 
         m_flSecondsFromVsyncToPhotons = vr::VRSettings()->GetFloat( k_pch_Sample_Section, k_pch_Sample_SecondsFromVsyncToPhotons_Float );
-        //TODO: find actual frequency somehow (from openhmd?)
+
+        // Prop_DisplayFrequency_Float is not decoration: SteamVR derives the
+        // frame period from it, and the frame period is what sets how far ahead
+        // the compositor predicts every pose it draws. Shipped, this read
+        // returned 0 - resources/settings/default.vrsettings carries
+        // "displayFrequency": 0 and nothing ever overrode it, so the log said
+        // "Display Frequency: 0.000000" on every run since the driver existed.
+        //
+        // A zero frame period makes the photon-time arithmetic meaningless,
+        // which is a motion-proportional error: invisible at rest, growing with
+        // speed, and applied identically to the HMD and to both controllers
+        // because the compositor predicts them all against the same display
+        // clock. That profile survived seven fixes on the tracking side, none
+        // of which could touch it - the pose was fine, what the compositor did
+        // with it was not. It also explains why disabling prediction outright
+        // (OHMD_STEAMVR_NO_PREDICT=1) felt better despite adding latency.
+        //
+        // OpenHMD exposes no refresh-rate property, which is why upstream left
+        // a "TODO: find actual frequency somehow" here. The CV1's panel is
+        // 2160x1200 at 90 Hz - fixed, not a mode the host chooses - so use that
+        // and let the setting override for other hardware.
         m_flDisplayFrequency = vr::VRSettings()->GetFloat( k_pch_Sample_Section, k_pch_Sample_DisplayFrequency_Float );
+        if ( m_flDisplayFrequency <= 0.0f )
+        {
+            m_flDisplayFrequency = 90.0f;
+            DriverLog( "driver_openhmd: displayFrequency was %f; using %.1f Hz. "
+                "SteamVR predicts poses over one frame period, so a zero here "
+                "makes its photon-time arithmetic meaningless.\n",
+                vr::VRSettings()->GetFloat( k_pch_Sample_Section, k_pch_Sample_DisplayFrequency_Float ),
+                m_flDisplayFrequency );
+        }
 
         DriverLog( "driver_openhmd: Vendor: %s\n", m_sVendor.c_str() );
         DriverLog( "driver_openhmd: Serial Number: %s\n", m_sSerialNumber.c_str() );
