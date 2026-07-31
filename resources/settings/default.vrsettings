@@ -1,7 +1,7 @@
 {
-   "driver_openhmd" : {
-      "enable" : true,
-      "secondsFromVsyncToPhotons" : 0.011,
-      "displayFrequency" : 0
+   "driver_openhmd": {
+      "enable": true,
+      "secondsFromVsyncToPhotons": 0.011,
+      "displayFrequency": 90
    }
 }
