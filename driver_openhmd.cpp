@@ -73,6 +73,256 @@ static const char * const k_pch_Sample_SecondsFromVsyncToPhotons_Float = "second
 static const char * const k_pch_Sample_DisplayFrequency_Float = "displayFrequency";
 
 HmdQuaternion_t identityquat{ 1, 0, 0, 0};
+
+//-----------------------------------------------------------------------------
+// What we let SteamVR extrapolate with.
+//
+// SteamVR does not display the pose we hand it. It dead-reckons that pose
+// forward to photon time using vecVelocity, vecAcceleration, vecAngularVelocity
+// and poseTimeOffset, and shows the result. So every one of those fields is an
+// instruction to move the world, and any error in them is amplified by the
+// prediction horizon (~22-33 ms here) before it reaches the eye. Overshoot on a
+// hard stop is what that failure looks like.
+//
+// The evidence that this is where the artifact lives:
+//
+//   - The same OpenHMD tracking under Monado has no overshoot. Monado's ohmd
+//     driver never reports linear velocity at all and ignores at_timestamp_ns
+//     (oh_device.c:383), so nothing there can extrapolate; latency is absorbed
+//     by the compositor reprojecting onto a freshly *measured* pose.
+//   - Monado's own SteamVR driver deliberately zeroes all five of these fields
+//     (steamvr_drv/ovrd_driver.cpp:1356-1379, "monado predicts pose 'now'").
+//     Somebody else hit this and chose to defeat SteamVR's prediction too.
+//   - Our own pose captures said the tracking was clean - but they were logged
+//     at prediction horizon 0.0, which is the one horizon at which SteamVR's
+//     extrapolation cannot appear. They never covered this.
+//
+// MEASURED 2026-07-31, and the answer was no. With every term switched off the
+// extrapolation is provably total - SteamVR moved the pose by exactly 0.000 mm
+// at 11, 22 and 33 ms - and the reported artifact was unchanged. So prediction
+// is not the cause.
+//
+// It is also measurably GOOD, which settles the default. Scored with
+// tools/analyze_prediction.py on captures/lin/2026-07-31/predold2_*, while
+// moving (|w| > 0.5 rad/s):
+//
+//   horizon   predicted        no prediction
+//    11 ms    1.17 mm 0.146d   4.12 mm 1.013d
+//    22 ms    2.57 mm 0.393d   8.23 mm 2.020d
+//    33 ms    4.20 mm 0.747d  12.34 mm 3.026d
+//
+// Three times better than not predicting, and in the same league as the Oculus
+// runtime's 0.19 deg / 2.2 mm. Disabling it would be a pure latency regression
+// that fixes nothing, so prediction stays on by default and this knob exists
+// for experiments only:
+//
+//   OHMD_STEAMVR_PREDICT unset|1|all               everything (default)
+//   OHMD_STEAMVR_PREDICT=0|none                    nothing extrapolated
+//   OHMD_STEAMVR_PREDICT=offset,vel,angvel,accel   any subset, comma-separated
+//
+// Applies to the HMD and to both controllers. The knob it replaces was wired
+// only into the HMD path, so an earlier A/B "cleared" prediction while the
+// controllers went on extrapolating - one of two reasons that test was void.
+//-----------------------------------------------------------------------------
+enum PredictTerm {
+    kPredictNothing    = 0,
+    kPredictTimeOffset = 1 << 0,
+    kPredictAngVel     = 1 << 1,
+    kPredictVel        = 1 << 2,
+    kPredictAccel      = 1 << 3,
+    kPredictEverything = kPredictTimeOffset | kPredictAngVel |
+                         kPredictVel | kPredictAccel,
+};
+
+static int SteamVRPredictTerms()
+{
+    static int terms = -1;
+    if (terms >= 0)
+        return terms;
+
+    const char *e = getenv("OHMD_STEAMVR_PREDICT");
+    if (e == NULL || *e == '\0') {
+        terms = kPredictEverything;
+    } else if (strcmp(e, "1") == 0 || strcmp(e, "all") == 0) {
+        terms = kPredictEverything;
+    } else if (strcmp(e, "0") == 0 || strcmp(e, "none") == 0) {
+        terms = kPredictNothing;
+    } else {
+        terms = kPredictNothing;
+        std::string s(e);
+        size_t start = 0;
+        while (start <= s.size()) {
+            size_t comma = s.find(',', start);
+            if (comma == std::string::npos)
+                comma = s.size();
+            std::string tok = s.substr(start, comma - start);
+            if (tok == "offset")      terms |= kPredictTimeOffset;
+            else if (tok == "angvel") terms |= kPredictAngVel;
+            else if (tok == "vel")    terms |= kPredictVel;
+            else if (tok == "accel")  terms |= kPredictAccel;
+            else if (!tok.empty())
+                DriverLog("driver_openhmd: OHMD_STEAMVR_PREDICT: unknown term "
+                          "'%s', ignored\n", tok.c_str());
+            start = comma + 1;
+        }
+    }
+
+    DriverLog("driver_openhmd: SteamVR prediction terms = 0x%x "
+              "(offset=%d angvel=%d vel=%d accel=%d)\n", terms,
+              !!(terms & kPredictTimeOffset), !!(terms & kPredictAngVel),
+              !!(terms & kPredictVel), !!(terms & kPredictAccel));
+    return terms;
+}
+
+// Strip whatever SteamVR is not allowed to extrapolate with. Call once, on the
+// fully populated pose, immediately before returning it.
+static void ApplyPredictionPolicy(DriverPose_t &pose)
+{
+    const int terms = SteamVRPredictTerms();
+
+    if (!(terms & kPredictTimeOffset))
+        pose.poseTimeOffset = 0.0;
+    for (int i = 0; i < 3; i++) {
+        if (!(terms & kPredictAngVel))
+            pose.vecAngularVelocity[i] = 0.0;
+        if (!(terms & kPredictVel))
+            pose.vecVelocity[i] = 0.0;
+        if (!(terms & kPredictAccel))
+            pose.vecAcceleration[i] = 0.0;
+        // Never populated by this driver in the first place. Zero it explicitly
+        // so a second-order linear extrapolation is never paired with a
+        // first-order angular one - that asymmetry is felt as some parts of the
+        // scene settling later than others.
+        pose.vecAngularAcceleration[i] = 0.0;
+    }
+}
+
+//-----------------------------------------------------------------------------
+// The rendered field of view, which is the gain between head motion and world
+// motion.
+//
+// GetProjectionRaw hands SteamVR four tangents. If those tangents describe a
+// NARROWER cone than the lens actually presents to the eye, the world is
+// magnified: turning the head by theta sweeps the world across the retina by
+// more than theta, so the world over-rotates while you move and only agrees
+// with reality once you stop. That artifact is uniform across the image, is
+// exactly zero at rest, grows with speed, applies identically to the headset
+// and to the controllers because they share the projection, and is completely
+// untouchable by anything on the tracking side.
+//
+// Measured 2026-07-31: the two stacks disagree. From identical OpenHMD
+// constants, and inverting this driver's own logged frustum,
+//
+//   SteamVR-OpenHMD   73.78 deg H   79.73 deg V
+//   Monado            79.02 deg H   85.20 deg V
+//
+// which is exactly a uniform tangent scale of 1.09905. The user reports the
+// Monado configuration feels right and this one does not.
+//
+// The two derivations differ in what they use as the panel-metres-to-tangent
+// scale. We use display_info.eye_to_screen_distance (39.62 mm), a physical
+// distance. Monado reads OHMD_RIGHT_EYE_FOV, which rift.c computes as TWICE the
+// outer half-angle - it treats an asymmetric frustum as symmetric - and then
+// back-solves 36.05 mm to make the totals agree.
+//
+// Oculus keeps these as separate quantities. Rift.dll serialises, per lens,
+//
+//   LensConfigurations[%d].LensToScreen
+//   LensConfigurations[%d].MetersPerTanAngleAtCenter
+//   LensConfigurations[%d].PerMMEyeShiftSwim = [7 coefficients]
+//
+// so the tangent scale is NOT the lens-to-screen distance, and they carry an
+// explicit per-lens model of world swim as a function of eye shift. Using a
+// physical distance as the tangent scale is therefore very likely the actual
+// defect here, and 39.62 mm is very likely the wrong number for this job.
+//
+//   OHMD_STEAMVR_FOV_SCALE=<f>   multiply all four tangents by f
+//   OHMD_STEAMVR_FOV=monado      use Monado's derivation, solved at runtime
+//   (unset)                      unchanged - OpenHMD's frustum as-is
+//
+// Default deliberately changes nothing until the A/B says which way is right.
+//-----------------------------------------------------------------------------
+static bool FovUseMonado()
+{
+    static int use = -1;
+    if (use < 0) {
+        const char *e = getenv("OHMD_STEAMVR_FOV");
+        use = (e != NULL && strcmp(e, "monado") == 0) ? 1 : 0;
+    }
+    return use != 0;
+}
+
+static float FovExplicitScale()
+{
+    static float scale = -1.0f;
+    if (scale < 0.0f) {
+        const char *e = getenv("OHMD_STEAMVR_FOV_SCALE");
+        scale = 1.0f;
+        if (e != NULL && *e != '\0') {
+            float v = (float)atof(e);
+            // A scale outside this range is a typo, not an experiment; a zero
+            // or negative one would collapse the frustum and black the headset.
+            if (v > 0.5f && v < 2.0f)
+                scale = v;
+            else
+                DriverLog("driver_openhmd: OHMD_STEAMVR_FOV_SCALE=%s out of "
+                          "range (0.5..2.0), ignored\n", e);
+        }
+    }
+    return scale;
+}
+
+// Reproduce Monado's number rather than hardcoding 1.09905, so this stays
+// correct if the panel constants ever change. Monado feeds
+// math_compute_fovs() the scalar OHMD fov and it solves for the eye-to-screen
+// distance d satisfying atan(inner/d) + atan(outer/d) == fov, where that fov is
+// itself 2*atan(outer/near). The whole effect is then a uniform tangent scale
+// of near/d, because the panel distances are unchanged.
+static float FovMonadoScale(float tan_l, float tan_r, float near_m)
+{
+    const double outer_t = (fabs(tan_l) > fabs(tan_r)) ? fabs(tan_l) : fabs(tan_r);
+    const double inner_t = (fabs(tan_l) > fabs(tan_r)) ? fabs(tan_r) : fabs(tan_l);
+    const double outer = outer_t * near_m;
+    const double inner = inner_t * near_m;
+    const double target = 2.0 * atan(outer / near_m);
+
+    double lo = 1e-4, hi = 1.0;
+    for (int i = 0; i < 200; i++) {
+        const double d = 0.5 * (lo + hi);
+        if (atan(inner / d) + atan(outer / d) > target)
+            lo = d;
+        else
+            hi = d;
+    }
+    const double d = 0.5 * (lo + hi);
+    return (d > 1e-6) ? (float)(near_m / d) : 1.0f;
+}
+
+// Apply whichever policy is selected, and state the result in degrees. The log
+// line matters: two experiments earlier in this project were void because the
+// build under test was never the build that ran, and there was no way to tell
+// from the log which one had. An A/B that cannot be verified from its own
+// output is not a measurement.
+static void ApplyFovPolicy(const char *eye, float *l, float *r, float *t,
+                           float *b, float near_m)
+{
+    float scale = FovExplicitScale();
+    const char *how = "openhmd";
+    if (FovUseMonado()) {
+        scale = FovMonadoScale(*l, *r, near_m);
+        how = "monado";
+    } else if (scale != 1.0f) {
+        how = "scaled";
+    }
+
+    *l *= scale; *r *= scale; *t *= scale; *b *= scale;
+
+    const double h = (atan(fabs((double)*l)) + atan(fabs((double)*r))) * 180.0 / M_PI;
+    const double v = (atan(fabs((double)*t)) + atan(fabs((double)*b))) * 180.0 / M_PI;
+    DriverLog("driver_openhmd: FOV %-5s mode=%-7s scale=%.5f -> H %.2f deg  V %.2f deg\n",
+              eye, how, scale, h, v);
+}
+
 //-----------------------------------------------------------------------------
 // Purpose:
 //-----------------------------------------------------------------------------
@@ -164,6 +414,7 @@ public:
     int device_idx;
     int device_flags;
     DriverPose_t pose;
+    double untracked_pos[3] = { 0.0, 0.0, 0.0 };
 
     bool m_is_oculus;
 
@@ -226,20 +477,22 @@ public:
         // avoid "not fullscreen" warnings from vrmonitor
         vr::VRProperties()->SetBoolProperty( m_ulPropertyContainer, Prop_IsOnDesktop_Bool, false );
 
+	// The resting position used when the controller has no positional
+	// tracking - down and to the side, so it appears where a hand would
+	// plausibly be rather than inside the user's head at the origin.
+	// This used to be written into `pose` here, but GetPose() starts with
+	// `pose = { 0 }`, so it was erased before it was ever reported. Keep it
+	// as its own value and let GetPose() apply it when it is actually needed.
+	untracked_pos[0] = (device_flags & OHMD_DEVICE_FLAGS_LEFT_CONTROLLER) ? -0.25 : 0.25;
+	untracked_pos[1] = -0.5;
+	untracked_pos[2] = 0.15;
+
 	if (device_flags & OHMD_DEVICE_FLAGS_LEFT_CONTROLLER) {
            DriverLog("Left Controller\n");
            vr::VRProperties()->SetInt32Property( m_ulPropertyContainer, Prop_ControllerRoleHint_Int32, TrackedControllerRole_LeftHand);
-	   // Set an initial position down and to the left, which will be
-	   // used if there's no positional tracking
-	   pose.vecPosition[0] = -0.25;
-	   pose.vecPosition[1] = -0.5;
-	   pose.vecPosition[2] = 0.15;
 	} else {
            DriverLog("Right Controller\n");
            vr::VRProperties()->SetInt32Property( m_ulPropertyContainer, Prop_ControllerRoleHint_Int32, TrackedControllerRole_RightHand);
-	   pose.vecPosition[0] = 0.25;
-	   pose.vecPosition[1] = -0.5;
-	   pose.vecPosition[2] = 0.15;
 	}
 
 
@@ -374,9 +627,22 @@ public:
     DriverPose_t GetPose()
     {
 	pose = { 0 };
-	pose.poseIsValid = true;
-	pose.result = TrackingResult_Running_OK;
 	pose.deviceIsConnected = true;
+
+	// Report what we actually have. This used to claim poseIsValid with
+	// TrackingResult_Running_OK unconditionally, so a controller with no
+	// tracking at all was presented as confidently located at the origin -
+	// inside the user's head - rather than as untracked.
+	const bool has_rot = (device_flags & OHMD_DEVICE_FLAGS_ROTATIONAL_TRACKING) != 0;
+	const bool has_pos = (device_flags & OHMD_DEVICE_FLAGS_POSITIONAL_TRACKING) != 0;
+	pose.poseIsValid = has_rot || has_pos;
+	pose.result = pose.poseIsValid ? TrackingResult_Running_OK
+	                               : TrackingResult_Uninitialized;
+	if (!has_pos) {
+		// Orientation-only: park it where a hand plausibly is.
+		for (int i = 0; i < 3; i++)
+			pose.vecPosition[i] = untracked_pos[i];
+	}
 
 	if (device_flags & OHMD_DEVICE_FLAGS_ROTATIONAL_TRACKING) {
 		float quat[4];
@@ -483,6 +749,7 @@ public:
 		pose.qWorldFromDriverRotation = identityquat;
 	}
 
+	ApplyPredictionPolicy(pose);
 	return pose;
     }
 
@@ -972,6 +1239,9 @@ public:
         );
         
         DriverLog("projectionraw values lrtb, near far: %f %f %f %f | %f %f\n", *pfLeft, *pfRight, *pfTop, *pfBottom, near, far);
+
+        ApplyFovPolicy(eEye == Eye_Left ? "left" : "right",
+                       pfLeft, pfRight, pfTop, pfBottom, near);
         
         //DriverLog("angles %f %f %f\n", yaw, pitch, roll);
     }
@@ -1120,26 +1390,10 @@ public:
         ohmd_device_getf(d, OHMD_POSE_AGE_SECONDS, &pose_age);
         pose.poseTimeOffset = -pose_age;
 
-        // Diagnostic bisect: everything we can measure in the driver compares
-        // the fusion against vision, and that agreement is now good - but what
-        // SteamVR DISPLAYS is our pose extrapolated forward by its own
-        // compositor, using the velocities and time offset above. That link is
-        // otherwise unmeasurable from here. Zeroing all four leaves SteamVR
-        // nothing to extrapolate with, so the displayed pose becomes the
-        // measured pose plus fixed latency: it should feel LAGGY but must not
-        // overshoot. If "the image keeps moving after I stop" survives that,
-        // prediction is not the cause and the fault is upstream of it.
-        // OHMD_STEAMVR_NO_PREDICT=1.
-        static const bool no_predict = getenv("OHMD_STEAMVR_NO_PREDICT") != NULL;
-        if (no_predict) {
-            for (int i = 0; i < 3; i++) {
-                pose.vecVelocity[i] = 0.0;
-                pose.vecAcceleration[i] = 0.0;
-                pose.vecAngularVelocity[i] = 0.0;
-            }
-            pose.poseTimeOffset = 0.0;
-        }
-
+        // Everything set above is an input to SteamVR's own extrapolation, and
+        // is filtered by ApplyPredictionPolicy() before this pose is returned.
+        // See the policy block near identityquat for why the default keeps
+        // none of it.
         //printf("%f %f %f %f  %f %f %f\n", quat[0], quat[1], quat[2], quat[3], pos[0], pos[1], pos[2]);
         //fflush(stdout);
         //DriverLog("get hmd pose %f %f %f %f, %f %f %f\n", quat[0], quat[1], quat[2], quat[3], pos[0], pos[1], pos[2]);
@@ -1147,6 +1401,7 @@ public:
         pose.qWorldFromDriverRotation = identityquat;
         pose.qDriverFromHeadRotation = identityquat;
 
+        ApplyPredictionPolicy(pose);
         return pose;
     }
 
