@@ -1091,6 +1091,26 @@ public:
         ohmd_device_getf(d, OHMD_POSE_AGE_SECONDS, &pose_age);
         pose.poseTimeOffset = -pose_age;
 
+        // Diagnostic bisect: everything we can measure in the driver compares
+        // the fusion against vision, and that agreement is now good - but what
+        // SteamVR DISPLAYS is our pose extrapolated forward by its own
+        // compositor, using the velocities and time offset above. That link is
+        // otherwise unmeasurable from here. Zeroing all four leaves SteamVR
+        // nothing to extrapolate with, so the displayed pose becomes the
+        // measured pose plus fixed latency: it should feel LAGGY but must not
+        // overshoot. If "the image keeps moving after I stop" survives that,
+        // prediction is not the cause and the fault is upstream of it.
+        // OHMD_STEAMVR_NO_PREDICT=1.
+        static const bool no_predict = getenv("OHMD_STEAMVR_NO_PREDICT") != NULL;
+        if (no_predict) {
+            for (int i = 0; i < 3; i++) {
+                pose.vecVelocity[i] = 0.0;
+                pose.vecAcceleration[i] = 0.0;
+                pose.vecAngularVelocity[i] = 0.0;
+            }
+            pose.poseTimeOffset = 0.0;
+        }
+
         //printf("%f %f %f %f  %f %f %f\n", quat[0], quat[1], quat[2], quat[3], pos[0], pos[1], pos[2]);
         //fflush(stdout);
         //DriverLog("get hmd pose %f %f %f %f, %f %f %f\n", quat[0], quat[1], quat[2], quat[3], pos[0], pos[1], pos[2]);
